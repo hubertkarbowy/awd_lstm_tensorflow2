@@ -1,9 +1,9 @@
 import tensorflow as tf
 from tensorflow.python.ops import array_ops
-from tensorflow.keras.layers import LSTMCell
 from tensorflow.python.keras import backend as K
 
-class WeightDropLSTMCell(LSTMCell):
+@tf.keras.utils.register_keras_serializable()
+class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
   """ Weight-dropped Long short-term memory unit (AWD-LSTM) recurrent network cell.
       Adapted from Tensorflow 2.4.1 source code for LSTMCell available here:
 
@@ -28,6 +28,7 @@ class WeightDropLSTMCell(LSTMCell):
                recurrent_dropout=0.,
                weight_dropout=0.,
                **kwargs):
+        self.weight_dropout = weight_dropout
         super(WeightDropLSTMCell, self).__init__(
                units,
                activation='tanh',
@@ -46,8 +47,6 @@ class WeightDropLSTMCell(LSTMCell):
                dropout=0.,
                recurrent_dropout=0.,
                **kwargs)
-        self.weight_dropout = weight_dropout
-           
 
   def _compute_carry_and_output(self, x, h_tm1, c_tm1):
     """Computes carry and output using split kernels.
@@ -132,3 +131,13 @@ class WeightDropLSTMCell(LSTMCell):
   
     h = o * self.activation(c)
     return h, [h, c]
+
+  def get_config(self):
+    cfg = super().get_config()
+    cfg.update({'weight_dropout': self.weight_dropout}) 
+    return cfg
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)
+
