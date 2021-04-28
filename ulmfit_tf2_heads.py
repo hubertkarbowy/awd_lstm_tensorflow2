@@ -42,3 +42,27 @@ def ulmfit_fake_tagger(*, num_classes=3, pretrained_weights=None, fixed_seq_len=
         tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(3, activation='softmax'))
         ])
     return fake_model
+
+def ulmfit_fake_tagger_functional(*, num_classes=3, pretrained_weights=None, fixed_seq_len=None, spm_model_file,
+                          also_return_spm_encoder=False):
+    print("Building a regular LSTM model using only standard Keras blocks...")
+    # AWD_LSTM_Cell1 = WeightDropLSTMCell(1152, kernel_initializer='glorot_uniform', weight_dropout=0.5)
+    AWD_LSTM_CellX = WeightDropLSTMCell_v2(1152, kernel_initializer='glorot_uniform', weight_dropout=0.5)
+    # AWD_LSTM_Cell1 = tf.keras.layers.LSTMCell(1152, kernel_initializer='glorot_uniform', dropout=0.5)
+    il = tf.keras.layers.Input((fixed_seq_len,))
+    dropconnect_mask1 = tf.nn.dropout(tf.fill((1152,4608), 0.5), rate=0.5)
+    l = tf.keras.layers.Masking(mask_value=1)(il)
+    l = tf.keras.layers.Embedding(35000, 400)(l)
+    l = EmbeddingDropout(encoder_dp_rate=0.4, name="emb_dropout")(l)
+    l = tf.keras.layers.Dropout(0.3)(l)
+    l = tf.keras.layers.SpatialDropout1D(0.3)(l)
+    # l = tf.keras.layers.LSTM(1152, return_sequences=True)(l)
+    l = tf.keras.layers.RNN(AWD_LSTM_CellX, return_sequences=True, name="AWD_RNN1")([l, dropconnect_mask1])
+    l = tf.keras.layers.SpatialDropout1D(0.5)(l)
+    l = tf.keras.layers.LSTM(1152, return_sequences=True)(l)
+    l = tf.keras.layers.SpatialDropout1D(0.5)(l)
+    l = tf.keras.layers.LSTM(400, return_sequences=True)(l)
+    l = tf.keras.layers.SpatialDropout1D(0.5)(l)
+    l = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(3, activation='softmax'))(l)
+    fake_model = tf.keras.models.Model(inputs=[il, dropconnect_mask1], outputs=l)
+    return fake_model
