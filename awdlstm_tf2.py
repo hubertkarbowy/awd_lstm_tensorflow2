@@ -26,9 +26,10 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
                bias_constraint=None,
                dropout=0.,
                recurrent_dropout=0.,
-               weight_dropout=0.,
+               weight_dropout=None, # zeros and ones
                **kwargs):
         self.weight_dropout = weight_dropout
+        self.per_batch_mask = None
         super(WeightDropLSTMCell, self).__init__(
                units,
                activation='tanh',
@@ -39,7 +40,7 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
                bias_initializer='zeros',
                unit_forget_bias=True,
                kernel_regularizer=None,
-               recurrent_regularizer=None,
+               recurrent_regularizer=recurrent_regularizer,
                bias_regularizer=None,
                kernel_constraint=None,
                recurrent_constraint=None,
@@ -55,7 +56,7 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
     x_i, x_f, x_c, x_o = x
     training = K.learning_phase()
     if training:
-        dropped_recurrent_kernel = tf.nn.dropout(self.recurrent_kernel, self.weight_dropout)
+        dropped_recurrent_kernel = self.recurrent_kernel * self.per_batch_mask
     else:
         dropped_recurrent_kernel = self.recurrent_kernel
     h_tm1_i, h_tm1_f, h_tm1_c, h_tm1_o = h_tm1
@@ -68,6 +69,10 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
     o = self.recurrent_activation(
         x_o + K.dot(h_tm1_o, dropped_recurrent_kernel[:, self.units * 3:]))
     return c, o
+
+  def build(self, input_shape):
+      super().build(input_shape)
+      self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
 
   def call(self, inputs, states, training=None):
     h_tm1 = states[0]  # previous memory state
@@ -116,13 +121,23 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
       h_tm1 = (h_tm1_i, h_tm1_f, h_tm1_c, h_tm1_o)
       c, o = self._compute_carry_and_output(x, h_tm1, c_tm1)
     else:
+      # tf.print("Implementacja druga")
       if 0. < self.dropout < 1.:
         inputs = inputs * dp_mask[0]
       z = K.dot(inputs, self.kernel)
       if training is True:
-        z += K.dot(h_tm1, tf.nn.dropout(self.recurrent_kernel, self.weight_dropout))
+        z += K.dot(h_tm1, self.recurrent_kernel)
+        # ;STAD - cieknie z linijki ponizej, choc juz mniej niz poprzednio.
+        # Moze trzeba jakos znalezc
+        # sposob, zeby self.per_batch_mask tu nie siedzialo?
+        # Tylko jak to kurcze podac do *warstwy* RNN, a nie do *komorki*?
+        # Bo ten kod (w call) odpala sie za kazdym obrotem komorki.
+        # Po kerasowej warstwie tf.keras.LSTM zdaje sie nie da sie dziedziczyc.
+        # Nie wiem czy nie trzeba bedzie robic wielu wejsc tylko dla maski...
+        z += K.dot(h_tm1, self.per_batch_mask * self.recurrent_kernel)
       else:
         z += K.dot(h_tm1, self.recurrent_kernel)
+      #z += K.dot(h_tm1, self.recurrent_kernel)
       if self.use_bias:
         z = K.bias_add(z, self.bias)
   
@@ -136,6 +151,16 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
     cfg = super().get_config()
     cfg.update({'weight_dropout': self.weight_dropout}) 
     return cfg
+
+  def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
+      training = tf.keras.backend.learning_phase()
+      if training:
+          tf.print("~~~~~~ Setting the initial state (czemu tego nie widac??) ~~~~~")
+          # ;STAD CHYBA TEZ CIEKNIE
+          self.per_batch_mask = tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 0.5), rate=self.weight_dropout)
+      return super().get_initial_state(inputs=inputs, batch_size=batch_size, dtype=dtype)
+      # return original_states # + [per_batch_mask]
+
 
   @classmethod
   def from_config(cls, config):
