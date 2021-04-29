@@ -6,7 +6,7 @@ from tensorflow.keras.layers import LSTMCell
 from .awdlstm_tf2 import WeightDropLSTMCell
 
 VOCAB_SIZE=35000
-MAX_SEQ_LEN=100
+MAX_SEQ_LEN=200
 
 # TODO:
 # 1) [DONE] Weight tying
