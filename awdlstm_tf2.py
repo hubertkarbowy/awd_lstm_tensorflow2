@@ -33,7 +33,7 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
         self.per_batch_mask = None
         self.awd_recurrent_kernel = None
         self.modified = False # a hack - this will lose the last batch
-        self.verbose = False
+        self.verbose = verbose
         if recurrent_dropout > 0 and weight_dropout is not None:
             tf.print("WARNING: applying both AWD and recurrent dropout does not make sense - only the TF default version will be applied")
         super(WeightDropLSTMCell, self).__init__(
@@ -57,13 +57,19 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
 
   def build(self, input_shape):
       super().build(input_shape)
-      # we set up a separate recurrent kernel for use during the training phase:
+      # We set up a separate variable called `awd_recurrent_kernel`
+      # for use during the training phase. Its value after the gradient
+      # update will be copied to the original `recurrent_kernel` (see get_initial_state).
+      # This means that the original variable will NOT be updated
+      # by the gradient tape. There will be a warning about this
+      # ("gradients not found") which is OK to ignore for now.
       self.awd_recurrent_kernel = tf.Variable(self.recurrent_kernel,
                                               name="awd_recurrent_kernel",
                                               trainable=True)
-      self.per_batch_mask = tf.Variable(lambda: tf.ones(self.recurrent_kernel.shape, dtype=tf.float32),
-                                        name="awd_recurrent_mask",
-                                        trainable=False)
+      #self.per_batch_mask = tf.Variable(lambda: tf.ones(self.recurrent_kernel.shape, dtype=tf.float32),
+      #                                  name="awd_recurrent_mask",
+      #                                  trainable=False)
+      self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
 
   def call(self, inputs, states, training=None):
     h_tm1 = states[0]  # previous memory state
@@ -131,11 +137,6 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
     h = o * self.activation(c)
     return h, [h, c]
 
-  def get_config(self):
-    cfg = super().get_config()
-    cfg.update({'weight_dropout': self.weight_dropout, 'verbose': self.verbose}) 
-    return cfg
-
   def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
     # We apply a workaround here. If we apply AWD dropout in `call`, this will create
     # lots of new tensors (one per timestep). Instead, we apply it to recurrent kernel
@@ -144,13 +145,20 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
       self.recurrent_kernel.assign(self.awd_recurrent_kernel) # copy weights after gradient updates
       self.awd_recurrent_kernel.assign(self.per_batch_mask * self.recurrent_kernel)
       self.modified = False
-      self.per_batch_mask.assign(tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 0.5), rate=self.weight_dropout))
+      # self.per_batch_mask.assign(tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout))
+      self.per_batch_mask = tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout)
       if self.verbose:
         tf.print("~~~~~~  Updating the mask ~~~~~\n") # FIXME: Proper enable TF logging
         tf.print(self.per_batch_mask)
     else:
-      self.per_batch_mask.assign(tf.ones(self.recurrent_kernel.shape, dtype=tf.float32))
+      #self.per_batch_mask.assign(tf.ones(self.recurrent_kernel.shape, dtype=tf.float32))
+      self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
     return super().get_initial_state(inputs=inputs, batch_size=batch_size, dtype=dtype)
+
+  def get_config(self):
+    cfg = super().get_config()
+    cfg.update({'weight_dropout': self.weight_dropout, 'verbose': self.verbose}) 
+    return cfg
 
   @classmethod
   def from_config(cls, config):
