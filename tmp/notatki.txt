@@ -1,0 +1,63 @@
+import tensorflow as tf
+from awd_lstm_tensorflow2.ulmfit_tf2 import tf2_ulmfit_encoder, ExportableULMFiT
+lm_num, enc_num, outmask_num, spm_encoder_model = tf2_ulmfit_encoder(fixed_seq_len=256, spm_args={'spm_model_file': '/wymiana/Projekty/NLP/NlpMementos_data/word_vectors/pl-wiki100/plwiki100-sp35k.model', 'add_bos': True, 'add_eos': True, 'lumped_sents_separator': '[SEP]'}, use_awd=True)
+exportable = ExportableULMFiT(lm_num, enc_num, outmask_num, spm_encoder_model)
+convenience_signatures={'numericalized_encoder': exportable.numericalized_encoder, 'string_encoder': exportable.string_encoder, 'spm_processor': exportable.string_numericalizer}
+tf.saved_model.save(exportable, 'ulmfit_tf2_awd256', signatures=convenience_signatures)
+
+kv = kdf5model.get_weights()
+kvars = [kv[0], kv[1], kv[2], kv[3], kv[2], kv[4], kv[5], kv[6], kv[5], kv[7], kv[8], kv[9], kv[8]] # to są wagi ze starego modelu hdf5
+
+
+
+model = tf.keras.models.Sequential()
+model.add(tf.keras.layers.Input((1,), dtype=tf.string))
+
+
+
+import tensorflow as tf
+import tensorflow_hub as hub
+import tensorflow_text as text
+ulmfit_bundle = hub.load('ulmfit_tf2_noawd512/')
+example_text = tf.constant(["All men are born free and equal.__SEP__They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood."]*10)
+
+
+
+ORIGINAL CODE - LM
+
+not_padded/seq_len:  100_AWD     100_PLAIN     512_AWD      512_PLAIN
+     10              6.5s        6.73s         33.4s        21.9s
+
+
+ORIGINAL CODE - encoder
+
+not_padded/seq_len:  100_AWD     100_PLAIN     512_AWD      512_PLAIN
+     10              1.47s       1.62s                      7.1s
+    mix (Cz-S)       1.47
+
+
+RESTORED - LM
+not_padded/seq_len:  100_AWD     100_PLAIN     512_AWD      512_PLAIN
+     10              1.24s        1.1s         5.04s        4.95s
+     16                                                     
+
+
+RESTORED - encoder
+not_padded/seq_len:  100_AWD     100_PLAIN     512_AWD      512_PLAIN
+     10              1.24s        0.9s         4.01s        3.83s
+     16                                                     4.42s
+    mix (Cz-S)       1.22s
+
+HERBERT - encoder
+not_padded/seq_len:  100                                    512
+     10                                                      7s
+
+Cz-S: 10 tensorow
+
+
+
+WARNING:tensorflow:11 out of the last 14 calls to <function recreate_function.<locals>.restored_function_body at 0x7fdd0f92dc80> triggered tf.function retracing. Tracing is expensive and the excessive number of
+tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside
+ of the loop. For (2), @tf.function has experimental_relax_shapes=True option that relaxes argument shapes that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function
+#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+
