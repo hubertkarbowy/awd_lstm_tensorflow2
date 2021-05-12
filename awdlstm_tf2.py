@@ -3,7 +3,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.keras import backend as K
 
 @tf.keras.utils.register_keras_serializable()
-class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
+class EagerWeightDropLSTMCell(tf.keras.layers.LSTMCell):
   """ Weight-dropped Long short-term memory unit (AWD-LSTM) recurrent network cell.
       Adapted from Tensorflow 2.4.1 source code for LSTMCell available here:
 
@@ -31,7 +31,7 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
                **kwargs):
         self.weight_dropout = weight_dropout
         self.per_batch_mask = None
-        # self.awd_recurrent_kernel = None
+        self.awd_recurrent_kernel = None
         self.modified = False # a hack - this will lose the last batch
         self.verbose = verbose
         self.count = 1
@@ -62,16 +62,16 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
       # for use during the training phase. Its value after the gradient
       # update will be copied to the original `recurrent_kernel` (see get_initial_state).
 
-      # self.awd_recurrent_kernel = tf.Variable(initial_value=tf.zeros(self.recurrent_kernel.shape),
-      #                                         name="awd_recurrent_kernel",
-      #                                         trainable=True)
+      self.awd_recurrent_kernel = tf.Variable(initial_value=tf.zeros(self.recurrent_kernel.shape),
+                                              name="awd_recurrent_kernel",
+                                              trainable=True)
 
       # The above means that the original variable will NOT be updated
       # by the gradient tape. This quenches the warnings about "gradients not found" while
       # preserving the variable itself as it is used in various places of tf.keras.layers.LSTMCell
       # after which this class inherits.
-      # self.recurrent_kernel = tf.Variable(self.recurrent_kernel,
-      #                                     name="recurrent_kernel", trainable=False)
+      self.recurrent_kernel = tf.Variable(self.recurrent_kernel,
+                                          name="recurrent_kernel", trainable=False)
       self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
 
 
@@ -127,14 +127,7 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
       z = K.dot(inputs, self.kernel)
       #z += K.dot(h_tm1, self.recurrent_kernel)
       if training is True:
-        z += K.dot(h_tm1, self.recurrent_kernel)
-        # z += K.dot(h_tm1, self.recurrent_kernel)
-        # if self.modified is False: # works only in eager mode
-        
-          #self.per_batch_mask = tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout)
-          #self.awd_recurrent_kernel.assign(self.per_batch_mask * self.recurrent_kernel)
-          # self.modified = True
-        #z += K.dot(h_tm1, self.awd_recurrent_kernel)
+        z += K.dot(h_tm1, self.awd_recurrent_kernel)
       else:
         z += K.dot(h_tm1, self.recurrent_kernel)
       if self.use_bias:
@@ -151,19 +144,19 @@ class WeightDropLSTMCell(tf.keras.layers.LSTMCell):
     # lots of new tensors (one per timestep). Instead, we apply it to recurrent kernel
     # here because this function is called OUTSIDE the training phase.
 
-    # ahhh this only works in eager mode...
-    # if self.modified is True: # FIXME: this is assigned inside the training loop AND WILL ALSO GET CALLED ON FIRST INFERENCE
-    #   self.recurrent_kernel.assign(self.awd_recurrent_kernel) # copy weights after gradient updates
-    #   self.awd_recurrent_kernel.assign(self.per_batch_mask * self.recurrent_kernel)
-    #   self.modified = False
-    #   # self.per_batch_mask.assign(tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout))
-    #   self.per_batch_mask = tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout)
-    #   #if self.verbose:
-    #   tf.print("~~~~~~  Updating the mask ~~~~~\n") # FIXME: Proper enable TF logging
-    #   tf.print(self.per_batch_mask)
-    # else:
-    #   #self.per_batch_mask.assign(tf.ones(self.recurrent_kernel.shape, dtype=tf.float32))
-    #   self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
+    # This only works in eager mode! It will not work after exporting to a SavedModel.
+    if self.modified is True: # FIXME: this is assigned inside the training loop AND WILL ALSO GET CALLED ON FIRST INFERENCE
+      self.recurrent_kernel.assign(self.awd_recurrent_kernel) # copy weights after gradient updates
+      self.awd_recurrent_kernel.assign(self.per_batch_mask * self.recurrent_kernel)
+      self.modified = False
+      # self.per_batch_mask.assign(tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout))
+      self.per_batch_mask = tf.nn.dropout(tf.fill(self.recurrent_kernel.shape, 1-self.weight_dropout), rate=self.weight_dropout)
+      if self.verbose:
+        tf.print("~~~~~~  Updating the mask ~~~~~\n") # FIXME: Proper enable TF logging
+        tf.print(self.per_batch_mask)
+    else:
+      #self.per_batch_mask.assign(tf.ones(self.recurrent_kernel.shape, dtype=tf.float32))
+      self.per_batch_mask = tf.ones(self.recurrent_kernel.shape, dtype=tf.float32)
     return super().get_initial_state(inputs=inputs, batch_size=batch_size, dtype=dtype)
 
   def get_config(self):
